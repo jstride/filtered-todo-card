@@ -1,4 +1,52 @@
 class FilteredTodoCard extends HTMLElement {
+  static _isEmptyValue(value) {
+    if (value === undefined || value === null) return true;
+    if (typeof value === "string") return value.trim() === "";
+    if (Array.isArray(value)) return value.length === 0 || value.every((item) => this._isEmptyValue(item));
+    if (typeof value === "object") {
+      const entries = Object.entries(value);
+      return entries.length === 0 || entries.every(([, item]) => this._isEmptyValue(item));
+    }
+    return false;
+  }
+
+  static _cleanObject(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+
+    const cleaned = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (key === "exists") {
+        cleaned[key] = item;
+        continue;
+      }
+
+      if (this._isEmptyValue(item)) continue;
+
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        const nested = this._cleanObject(item);
+        if (!this._isEmptyValue(nested)) cleaned[key] = nested;
+      } else {
+        cleaned[key] = item;
+      }
+    }
+    return cleaned;
+  }
+
+  static _cleanConfig(config) {
+    const cleaned = { ...config };
+
+    if (cleaned.filter && typeof cleaned.filter === "object" && !Array.isArray(cleaned.filter)) {
+      cleaned.filter = this._cleanObject(cleaned.filter);
+      if (this._isEmptyValue(cleaned.filter)) cleaned.filter = {};
+    }
+
+    if (typeof cleaned.strip === "string" && cleaned.strip.trim() === "") {
+      delete cleaned.strip;
+    }
+
+    return cleaned;
+  }
+
   static getConfigForm() {
     const textOperators = [
       { name: "equals", selector: { text: {} } },
@@ -228,6 +276,8 @@ class FilteredTodoCard extends HTMLElement {
 
     this._clearRefreshTimer();
 
+    const cleanedConfig = FilteredTodoCard._cleanConfig(config);
+
     this.config = {
       filter: {},
       status: "needs_action",
@@ -239,7 +289,7 @@ class FilteredTodoCard extends HTMLElement {
       allow_complete: true,
       refresh_interval: 30,
       case_sensitive: false,
-      ...config,
+      ...cleanedConfig,
     };
 
     this.items = [];
@@ -351,7 +401,7 @@ class FilteredTodoCard extends HTMLElement {
   }
 
   _matchTextRule(value, rule) {
-    if (rule == null) return true;
+    if (FilteredTodoCard._isEmptyValue(rule)) return true;
 
     if (typeof rule !== "object" || Array.isArray(rule)) {
       return this._normalise(value) === this._normalise(rule);
@@ -367,7 +417,7 @@ class FilteredTodoCard extends HTMLElement {
         continue;
       }
 
-      if (expectedRaw === undefined || expectedRaw === null || expectedRaw === "") continue;
+      if (FilteredTodoCard._isEmptyValue(expectedRaw)) continue;
 
       const expected = this._normalise(expectedRaw);
 
@@ -461,6 +511,8 @@ class FilteredTodoCard extends HTMLElement {
   }
 
   _matchDueRule(due, rule) {
+    if (FilteredTodoCard._isEmptyValue(rule)) return true;
+
     const dueKey = this._dueDateKey(due);
 
     if (typeof rule === "string") {
@@ -485,7 +537,7 @@ class FilteredTodoCard extends HTMLElement {
       }
     }
 
-    if (rule == null || typeof rule !== "object" || Array.isArray(rule)) {
+    if (typeof rule !== "object" || Array.isArray(rule)) {
       return false;
     }
 
@@ -495,7 +547,7 @@ class FilteredTodoCard extends HTMLElement {
         continue;
       }
 
-      if (expectedRaw === undefined || expectedRaw === null || expectedRaw === "") continue;
+      if (FilteredTodoCard._isEmptyValue(expectedRaw)) continue;
 
       const expectedToken = String(expectedRaw);
       const resolved = this._resolveDueToken(expectedToken);
@@ -536,6 +588,8 @@ class FilteredTodoCard extends HTMLElement {
     const filter = this.config.filter || {};
 
     return Object.entries(filter).every(([field, rule]) => {
+      if (FilteredTodoCard._isEmptyValue(rule)) return true;
+
       if (field === "due") return this._matchDueRule(item.due, rule);
 
       if (!["summary", "description", "uid", "status"].includes(field)) {
