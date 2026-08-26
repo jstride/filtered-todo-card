@@ -6,6 +6,7 @@ The source to-do list remains authoritative. The card reads items through Home A
 
 ## Features
 
+- Native Home Assistant visual card editor
 - Filter a to-do list without creating duplicate entities or lists
 - Filter by summary, description, UID, status, and due date
 - Due-date shortcuts for `today`, `tomorrow`, `overdue`, and `today_or_overdue`
@@ -14,6 +15,7 @@ The source to-do list remains authoritative. The card reads items through Home A
 - Strip tags or prefixes from displayed task names without modifying the source task
 - Mark tasks complete from the card
 - Sort by due date or summary
+- Uses the Home Assistant configured time zone
 - Uses Home Assistant theme variables
 - No external dependencies
 
@@ -22,16 +24,47 @@ The source to-do list remains authoritative. The card reads items through Home A
 ### HACS
 
 1. Open HACS in Home Assistant.
-2. Add `https://github.com/jstride/filtered-todo-card` as a custom repository.
-3. Select **Dashboard** as the repository type.
-4. Install **Filtered Todo Card**.
-5. Reload the browser or Home Assistant app if prompted.
+2. Open the three-dot menu and select **Custom repositories**.
+3. Add `https://github.com/jstride/filtered-todo-card`.
+4. Select **Dashboard** as the repository type.
+5. Install **Filtered Todo Card**.
+6. Reload the browser or Home Assistant app if prompted.
 
 HACS should add the Lovelace resource automatically.
 
 ### Manual
 
 Copy `filtered-todo-card.js` to `/config/www/filtered-todo-card.js`, then add `/local/filtered-todo-card.js` as a JavaScript module under **Settings > Dashboards > Resources**.
+
+## Visual editor
+
+Filtered Todo Card supports Home Assistant's native graphical card configuration.
+
+From a dashboard:
+
+1. Select **Edit dashboard**.
+2. Select **Add card**.
+3. Choose **Filtered Todo Card**.
+4. Select a `todo.*` entity.
+5. Configure filters and display options in the visual editor.
+
+The visual editor supports:
+
+- `todo.*` entity selection
+- Card title
+- Summary filters: equals, does not equal, contains, does not contain, starts with, ends with, and regex
+- Description filters using the same operators
+- Due-date presets: today, tomorrow, overdue, today or overdue, future, has a due date, and no due date
+- Text stripping
+- Sort order
+- Due-date and description display
+- Empty-card behaviour
+- Completion controls
+- Item status
+- Refresh interval
+- Case-sensitive matching
+
+Advanced filter shapes remain available in YAML. If a card uses an advanced YAML-only option, Home Assistant will keep the YAML configuration available rather than trying to represent that option incorrectly in the visual editor.
 
 ## Basic usage
 
@@ -99,7 +132,7 @@ cards:
 | `entity` | Yes | | Source `todo.*` entity |
 | `title` | No | Entity friendly name | Card title |
 | `filter` | No | `{}` | Filter rules. All configured fields must match |
-| `status` | No | `needs_action` | Status requested from `todo.get_items`. Can also be a list |
+| `status` | No | `needs_action` | Status requested from `todo.get_items`. Can also be a list in YAML |
 | `strip` | No | | String or list of literal strings to remove from displayed summaries |
 | `sort` | No | `due_asc` | `due_asc`, `due_desc`, `summary_asc`, `summary_desc`, or `none` |
 | `show_due` | No | `false` | Show the source due value below the summary |
@@ -168,7 +201,7 @@ Supported relative values:
 - `any`
 - `none`
 
-You can also match an exact date:
+You can also match an exact date in YAML:
 
 ```yaml
 filter:
@@ -200,12 +233,26 @@ filter:
   due: today
 ```
 
+## Updating with HACS
+
+HACS periodically checks downloaded repositories for changes. To update immediately:
+
+1. Open **HACS**.
+2. Find **Filtered Todo Card**.
+3. Open the three-dot menu and select **Update information**.
+4. Open the three-dot menu again and select **Redownload**.
+5. Choose the newest version if HACS presents a version selector.
+6. Reload the Home Assistant frontend or fully close and reopen the Home Assistant app.
+
+`Update information` only refreshes HACS metadata. `Redownload` is the step that actually downloads the updated JavaScript.
+
 ## Notes
 
 - Filters only affect what this card displays. They do not create a new Home Assistant `todo.*` entity.
 - Completing an item updates the original source item using its UID.
 - All top-level filter fields are ANDed together.
 - The card requests `needs_action` items by default, so completed items are not shown unless `status` is changed.
+- The visual editor covers the common configuration options. Advanced YAML features such as UID/status filters, `exists`, multiple `strip` values, multiple statuses, exact due dates, and due-date comparison objects remain available through YAML.
 
 ## License
 
