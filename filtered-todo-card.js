@@ -793,9 +793,10 @@ class FilteredTodoCard extends HTMLElement {
           display: flex;
           align-items: center;
           justify-content: center;
+          flex: 0 0 36px;
           width: 36px;
           height: 36px;
-          margin: -2px 0 0 -6px;
+          margin: 0 0 0 -6px;
           padding: 0;
           border: 0;
           border-radius: 50%;
@@ -820,10 +821,12 @@ class FilteredTodoCard extends HTMLElement {
         .todo-content {
           min-width: 0;
           flex: 1;
-          padding-top: 2px;
         }
 
         .summary {
+          display: flex;
+          align-items: center;
+          min-height: 36px;
           color: var(--primary-text-color);
           font-size: 16px;
           line-height: 1.35;
