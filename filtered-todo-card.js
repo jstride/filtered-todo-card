@@ -791,7 +791,7 @@ class FilteredTodoCard extends HTMLElement {
     if (this.error && !this._hasData) {
       content = `<div class="message error">${this._escapeHtml(this.error)}</div>`;
     } else if (!this._hasData) {
-      content = "";
+      content = `<div class="message">Loading…</div>`;
     } else if (items.length === 0) {
       content = `<div class="message">${this._escapeHtml(this.config.empty_text)}</div>`;
     } else {
