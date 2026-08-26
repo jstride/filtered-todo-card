@@ -133,13 +133,14 @@ Cards using the same source entity and item status share one cache and one in-fl
 
 ## Cache and refresh behaviour
 
-The card keeps the last successful unfiltered item list in browser storage. On later dashboard loads it renders that cached list immediately and refreshes it in the background only when needed.
+The card keeps the last successful unfiltered item list in browser storage. If no cache exists, the card shows `Loading…` while it retrieves the initial list. Once a cache exists, later dashboard loads render it immediately and keep it up to date silently in the background.
 
 The refresh strategy is:
 
-1. Display the browser cache immediately when available.
-2. Refresh as soon as Home Assistant reports that the source `todo.*` entity has changed.
-3. Use `refresh_interval` as a fallback reconciliation timer for changes that cannot be detected from the normal dashboard entity state stream.
+1. If no cache exists, show `Loading…`, fetch the items, cache them, then render the list.
+2. If a cache exists, display it immediately with no loading state.
+3. Refresh silently in the background as soon as Home Assistant reports that the source `todo.*` entity has changed.
+4. Use `refresh_interval` as a fallback background reconciliation timer for changes that cannot be detected from the normal dashboard entity state stream.
 
 The default fallback is **900 seconds (15 minutes)**. This matches Home Assistant's current CalDAV todo polling interval. The fallback calls Home Assistant's `todo.get_items` action and does not itself force another CalDAV server poll.
 
