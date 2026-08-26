@@ -15,6 +15,10 @@ The source to-do list remains authoritative. The card reads items through Home A
 - Strip tags or prefixes from displayed task names without modifying the source task
 - Mark tasks complete from the card
 - Sort by due date or summary
+- Browser cache for immediate rendering on subsequent dashboard loads
+- Shared in-memory cache when multiple cards use the same source list
+- Refresh immediately when Home Assistant reports the source todo entity changed
+- Configurable fallback reconciliation interval, defaulting to 15 minutes
 - Uses the Home Assistant configured time zone
 - Uses Home Assistant theme variables
 - No external dependencies
@@ -61,7 +65,7 @@ The visual editor supports:
 - Empty-card behaviour
 - Completion controls
 - Item status
-- Refresh interval
+- Fallback refresh interval
 - Case-sensitive matching
 
 Advanced filter shapes remain available in YAML. If a card uses an advanced YAML-only option, Home Assistant will keep the YAML configuration available rather than trying to represent that option incorrectly in the visual editor.
@@ -125,6 +129,34 @@ cards:
     strip: "[Shopping]"
 ```
 
+Cards using the same source entity and item status share one cache and one in-flight `todo.get_items` request. This avoids four cards making four identical requests when a dashboard opens.
+
+## Cache and refresh behaviour
+
+The card keeps the last successful unfiltered item list in browser storage. On later dashboard loads it renders that cached list immediately and refreshes it in the background only when needed.
+
+The refresh strategy is:
+
+1. Display the browser cache immediately when available.
+2. Refresh as soon as Home Assistant reports that the source `todo.*` entity has changed.
+3. Use `refresh_interval` as a fallback reconciliation timer for changes that cannot be detected from the normal dashboard entity state stream.
+
+The default fallback is **900 seconds (15 minutes)**. This matches Home Assistant's current CalDAV todo polling interval. The fallback calls Home Assistant's `todo.get_items` action and does not itself force another CalDAV server poll.
+
+For CalDAV, this matters because the todo entity state is the number of incomplete tasks. A CalDAV refresh can change task text, due dates, or replace one task with another without changing that count. Home Assistant may therefore have new todo item data without a normal visible entity state change. The 15-minute fallback reconciles those cases.
+
+To change the fallback interval:
+
+```yaml
+type: custom:filtered-todo-card
+entity: todo.tasks
+refresh_interval: 900
+```
+
+Set `refresh_interval: 0` to disable fallback reconciliation. Source-entity changes and updates made through the card still trigger refreshes.
+
+The browser cache is only a display cache. Home Assistant and the underlying todo integration remain authoritative.
+
 ## Configuration
 
 | Option | Required | Default | Description |
@@ -140,7 +172,7 @@ cards:
 | `empty_text` | No | `Nothing due` | Text displayed when no items match |
 | `hide_empty` | No | `false` | Hide the whole card when no items match |
 | `allow_complete` | No | `true` | Show a completion checkbox |
-| `refresh_interval` | No | `30` | Refresh interval in seconds. Set to `0` to disable polling |
+| `refresh_interval` | No | `900` | Fallback reconciliation interval in seconds. Set to `0` to disable it |
 | `case_sensitive` | No | `false` | Make text operators case-sensitive |
 
 ## Text filters
@@ -173,6 +205,8 @@ Supported operators are:
 
 Multiple operators in the same field rule are ANDed together.
 
+Empty visual-editor filter values are ignored. For example, `summary: {}` is treated as if no summary filter was configured.
+
 Example:
 
 ```yaml
@@ -201,7 +235,7 @@ Supported relative values:
 - `any`
 - `none`
 
-You can also match an exact date in YAML:
+You can also match an exact date:
 
 ```yaml
 filter:
@@ -233,26 +267,13 @@ filter:
   due: today
 ```
 
-## Updating with HACS
-
-HACS periodically checks downloaded repositories for changes. To update immediately:
-
-1. Open **HACS**.
-2. Find **Filtered Todo Card**.
-3. Open the three-dot menu and select **Update information**.
-4. Open the three-dot menu again and select **Redownload**.
-5. Choose the newest version if HACS presents a version selector.
-6. Reload the Home Assistant frontend or fully close and reopen the Home Assistant app.
-
-`Update information` only refreshes HACS metadata. `Redownload` is the step that actually downloads the updated JavaScript.
-
 ## Notes
 
 - Filters only affect what this card displays. They do not create a new Home Assistant `todo.*` entity.
 - Completing an item updates the original source item using its UID.
 - All top-level filter fields are ANDed together.
 - The card requests `needs_action` items by default, so completed items are not shown unless `status` is changed.
-- The visual editor covers the common configuration options. Advanced YAML features such as UID/status filters, `exists`, multiple `strip` values, multiple statuses, exact due dates, and due-date comparison objects remain available through YAML.
+- Cache data is stored locally in the browser running the dashboard and is not sent anywhere outside Home Assistant.
 
 ## License
 
