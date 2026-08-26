@@ -1,4 +1,218 @@
 class FilteredTodoCard extends HTMLElement {
+  static getConfigForm() {
+    const textOperators = [
+      { name: "equals", selector: { text: {} } },
+      { name: "not_equals", selector: { text: {} } },
+      { name: "contains", selector: { text: {} } },
+      { name: "not_contains", selector: { text: {} } },
+      { name: "starts_with", selector: { text: {} } },
+      { name: "ends_with", selector: { text: {} } },
+      { name: "regex", selector: { text: {} } },
+    ];
+
+    return {
+      schema: [
+        {
+          name: "entity",
+          required: true,
+          selector: {
+            entity: {
+              filter: { domain: "todo" },
+            },
+          },
+        },
+        { name: "title", selector: { text: {} } },
+        {
+          type: "expandable",
+          name: "filter",
+          title: "Filters",
+          flatten: false,
+          schema: [
+            {
+              type: "expandable",
+              name: "summary",
+              title: "Summary",
+              flatten: false,
+              schema: textOperators,
+            },
+            {
+              type: "expandable",
+              name: "description",
+              title: "Description",
+              flatten: false,
+              schema: textOperators,
+            },
+            {
+              name: "due",
+              selector: {
+                select: {
+                  options: [
+                    { value: "today", label: "Today" },
+                    { value: "tomorrow", label: "Tomorrow" },
+                    { value: "overdue", label: "Overdue" },
+                    { value: "today_or_overdue", label: "Today or overdue" },
+                    { value: "future", label: "Future" },
+                    { value: "any", label: "Has a due date" },
+                    { value: "none", label: "No due date" },
+                  ],
+                  mode: "dropdown",
+                },
+              },
+            },
+          ],
+        },
+        {
+          type: "expandable",
+          name: "display",
+          title: "Display",
+          flatten: true,
+          schema: [
+            { name: "strip", selector: { text: {} } },
+            {
+              name: "sort",
+              selector: {
+                select: {
+                  options: [
+                    { value: "due_asc", label: "Due date - earliest first" },
+                    { value: "due_desc", label: "Due date - latest first" },
+                    { value: "summary_asc", label: "Summary - A to Z" },
+                    { value: "summary_desc", label: "Summary - Z to A" },
+                    { value: "none", label: "Source order" },
+                  ],
+                  mode: "dropdown",
+                },
+              },
+            },
+            { name: "show_due", selector: { boolean: {} } },
+            { name: "show_description", selector: { boolean: {} } },
+            { name: "hide_empty", selector: { boolean: {} } },
+            { name: "allow_complete", selector: { boolean: {} } },
+            { name: "empty_text", selector: { text: {} } },
+          ],
+        },
+        {
+          type: "expandable",
+          name: "advanced",
+          title: "Advanced",
+          flatten: true,
+          schema: [
+            {
+              name: "status",
+              selector: {
+                select: {
+                  options: [
+                    { value: "needs_action", label: "Incomplete" },
+                    { value: "completed", label: "Completed" },
+                  ],
+                  mode: "dropdown",
+                },
+              },
+            },
+            {
+              name: "refresh_interval",
+              selector: {
+                number: {
+                  min: 0,
+                  max: 3600,
+                  step: 5,
+                  mode: "box",
+                  unit_of_measurement: "s",
+                },
+              },
+            },
+            { name: "case_sensitive", selector: { boolean: {} } },
+          ],
+        },
+      ],
+      computeLabel: (schema) => {
+        const labels = {
+          entity: "To-do entity",
+          title: "Title",
+          due: "Due date",
+          strip: "Strip from displayed summary",
+          sort: "Sort order",
+          show_due: "Show due date",
+          show_description: "Show description",
+          hide_empty: "Hide card when empty",
+          allow_complete: "Allow completing items",
+          empty_text: "Empty message",
+          status: "Item status",
+          refresh_interval: "Refresh interval",
+          case_sensitive: "Case-sensitive text filters",
+          equals: "Equals",
+          not_equals: "Does not equal",
+          contains: "Contains",
+          not_contains: "Does not contain",
+          starts_with: "Starts with",
+          ends_with: "Ends with",
+          regex: "Regular expression",
+        };
+        return labels[schema.name];
+      },
+      computeHelper: (schema) => {
+        const helpers = {
+          entity: "Select the Home Assistant todo.* entity to filter.",
+          strip: "Removes this literal text from the displayed summary only. The source task is unchanged.",
+          due: "For exact dates and date ranges, use the YAML editor.",
+          refresh_interval: "Polling interval in seconds. Set to 0 to disable polling.",
+          regex: "JavaScript regular expression. Matching is case-insensitive unless case-sensitive filtering is enabled.",
+        };
+        return helpers[schema.name];
+      },
+      assertConfig: (config) => {
+        if (config.entity && !String(config.entity).startsWith("todo.")) {
+          throw new Error("The entity must be a todo.* entity.");
+        }
+
+        if (Array.isArray(config.strip)) {
+          throw new Error("Multiple strip values are supported in YAML only.");
+        }
+
+        if (Array.isArray(config.status)) {
+          throw new Error("Multiple status values are supported in YAML only.");
+        }
+
+        const filter = config.filter || {};
+        const unsupportedFields = Object.keys(filter).filter(
+          (field) => !["summary", "description", "due"].includes(field)
+        );
+        if (unsupportedFields.length) {
+          throw new Error(
+            `Filters for ${unsupportedFields.join(", ")} are supported in YAML only.`
+          );
+        }
+
+        if (filter.due && typeof filter.due === "object") {
+          throw new Error("Due-date comparison objects are supported in YAML only.");
+        }
+
+        for (const field of ["summary", "description"]) {
+          const rule = filter[field];
+          if (rule == null) continue;
+          if (typeof rule !== "object" || Array.isArray(rule)) {
+            throw new Error(`${field} shorthand filters are supported in YAML only.`);
+          }
+          if (Object.prototype.hasOwnProperty.call(rule, "exists")) {
+            throw new Error(`${field}.exists is supported in YAML only.`);
+          }
+        }
+      },
+    };
+  }
+
+  static getStubConfig(hass) {
+    const entity = Object.keys(hass?.states || {}).find((entityId) =>
+      entityId.startsWith("todo.")
+    );
+
+    return {
+      entity: entity || "todo.tasks",
+      filter: {
+        due: "today",
+      },
+    };
+  }
+
   setConfig(config) {
     if (!config || !config.entity) {
       throw new Error("Filtered Todo Card requires an entity");
@@ -153,6 +367,8 @@ class FilteredTodoCard extends HTMLElement {
         continue;
       }
 
+      if (expectedRaw === undefined || expectedRaw === null || expectedRaw === "") continue;
+
       const expected = this._normalise(expectedRaw);
 
       switch (operator) {
@@ -278,6 +494,8 @@ class FilteredTodoCard extends HTMLElement {
         if ((dueKey !== null) !== Boolean(expectedRaw)) return false;
         continue;
       }
+
+      if (expectedRaw === undefined || expectedRaw === null || expectedRaw === "") continue;
 
       const expectedToken = String(expectedRaw);
       const resolved = this._resolveDueToken(expectedToken);
@@ -430,7 +648,11 @@ class FilteredTodoCard extends HTMLElement {
     const stateObj = this._hass?.states?.[this.config.entity];
     const title = this.config.title ?? stateObj?.attributes?.friendly_name ?? this.config.entity;
     const items = this._filteredItems();
-    const hideCard = Boolean(this.config.hide_empty) && !this.loading && !this.error && items.length === 0;
+    const hideCard =
+      Boolean(this.config.hide_empty) &&
+      !this.loading &&
+      !this.error &&
+      items.length === 0;
 
     this.style.display = hideCard ? "none" : "";
 
@@ -449,15 +671,21 @@ class FilteredTodoCard extends HTMLElement {
           const encodedUid = encodeURIComponent(uid);
           const pending = this._pending.has(uid);
           const summary = this._escapeHtml(this._stripSummary(item.summary));
-          const due = this.config.show_due && item.due
-            ? `<div class="meta">${this._escapeHtml(this._formatDue(item.due))}</div>`
-            : "";
-          const description = this.config.show_description && item.description
-            ? `<div class="description">${this._escapeHtml(item.description)}</div>`
-            : "";
+          const due =
+            this.config.show_due && item.due
+              ? `<div class="meta">${this._escapeHtml(this._formatDue(item.due))}</div>`
+              : "";
+          const description =
+            this.config.show_description && item.description
+              ? `<div class="description">${this._escapeHtml(item.description)}</div>`
+              : "";
           const checkbox = this.config.allow_complete
-            ? `<button class="complete" data-uid="${encodedUid}" ${pending ? "disabled" : ""} aria-label="Mark item complete">
-                 <ha-icon icon="${pending ? "mdi:progress-clock" : "mdi:checkbox-blank-outline"}"></ha-icon>
+            ? `<button class="complete" data-uid="${encodedUid}" ${
+                pending ? "disabled" : ""
+              } aria-label="Mark item complete">
+                 <ha-icon icon="${
+                   pending ? "mdi:progress-clock" : "mdi:checkbox-blank-outline"
+                 }"></ha-icon>
                </button>`
             : "";
 
@@ -571,7 +799,11 @@ class FilteredTodoCard extends HTMLElement {
       </style>
 
       <ha-card>
-        ${title === false || title === "" ? "" : `<div class="header">${this._escapeHtml(title)}</div>`}
+        ${
+          title === false || title === ""
+            ? ""
+            : `<div class="header">${this._escapeHtml(title)}</div>`
+        }
         <div class="items">${content}</div>
       </ha-card>
     `;
@@ -595,11 +827,32 @@ if (!customElements.get("filtered-todo-card")) {
 }
 
 window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "filtered-todo-card",
-  name: "Filtered Todo Card",
-  description: "Display filtered items from a Home Assistant todo entity",
-  preview: false,
-});
 
-console.info("%c FILTERED-TODO-CARD %c loaded", "color: white; background: #03a9f4; font-weight: 700;", "color: inherit;");
+if (!window.customCards.some((card) => card.type === "filtered-todo-card")) {
+  window.customCards.push({
+    type: "filtered-todo-card",
+    name: "Filtered Todo Card",
+    description: "Display filtered items from a Home Assistant todo entity",
+    preview: false,
+    documentationURL: "https://github.com/jstride/filtered-todo-card",
+    getEntitySuggestion: (_hass, entityId) => {
+      if (entityId?.split(".")[0] !== "todo") return null;
+
+      return {
+        config: {
+          type: "custom:filtered-todo-card",
+          entity: entityId,
+          filter: {
+            due: "today",
+          },
+        },
+      };
+    },
+  });
+}
+
+console.info(
+  "%c FILTERED-TODO-CARD %c loaded",
+  "color: white; background: #03a9f4; font-weight: 700;",
+  "color: inherit;"
+);
