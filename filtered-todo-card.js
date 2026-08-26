@@ -1,8 +1,15 @@
 class FilteredTodoCard extends HTMLElement {
+  static CACHE_VERSION = 3;
+  static DEFAULT_REFRESH_INTERVAL = 900;
+  static _memoryCache = new Map();
+  static _inflight = new Map();
+
   static _isEmptyValue(value) {
     if (value === undefined || value === null) return true;
     if (typeof value === "string") return value.trim() === "";
-    if (Array.isArray(value)) return value.length === 0 || value.every((item) => this._isEmptyValue(item));
+    if (Array.isArray(value)) {
+      return value.length === 0 || value.every((item) => this._isEmptyValue(item));
+    }
     if (typeof value === "object") {
       const entries = Object.entries(value);
       return entries.length === 0 || entries.every(([, item]) => this._isEmptyValue(item));
@@ -19,7 +26,6 @@ class FilteredTodoCard extends HTMLElement {
         cleaned[key] = item;
         continue;
       }
-
       if (this._isEmptyValue(item)) continue;
 
       if (item && typeof item === "object" && !Array.isArray(item)) {
@@ -63,11 +69,7 @@ class FilteredTodoCard extends HTMLElement {
         {
           name: "entity",
           required: true,
-          selector: {
-            entity: {
-              filter: { domain: "todo" },
-            },
-          },
+          selector: { entity: { filter: { domain: "todo" } } },
         },
         { name: "title", selector: { text: {} } },
         {
@@ -162,7 +164,7 @@ class FilteredTodoCard extends HTMLElement {
                 number: {
                   min: 0,
                   max: 3600,
-                  step: 5,
+                  step: 30,
                   mode: "box",
                   unit_of_measurement: "s",
                 },
@@ -185,7 +187,7 @@ class FilteredTodoCard extends HTMLElement {
           allow_complete: "Allow completing items",
           empty_text: "Empty message",
           status: "Item status",
-          refresh_interval: "Refresh interval",
+          refresh_interval: "Fallback refresh interval",
           case_sensitive: "Case-sensitive text filters",
           equals: "Equals",
           not_equals: "Does not equal",
@@ -202,7 +204,8 @@ class FilteredTodoCard extends HTMLElement {
           entity: "Select the Home Assistant todo.* entity to filter.",
           strip: "Removes this literal text from the displayed summary only. The source task is unchanged.",
           due: "For exact dates and date ranges, use the YAML editor.",
-          refresh_interval: "Polling interval in seconds. Set to 0 to disable polling.",
+          refresh_interval:
+            "Fallback reconciliation interval in seconds. The card refreshes sooner when Home Assistant reports the source entity changed. Default: 900 seconds (15 minutes). Set to 0 to disable the fallback.",
           regex: "JavaScript regular expression. Matching is case-insensitive unless case-sensitive filtering is enabled.",
         };
         return helpers[schema.name];
@@ -211,11 +214,9 @@ class FilteredTodoCard extends HTMLElement {
         if (config.entity && !String(config.entity).startsWith("todo.")) {
           throw new Error("The entity must be a todo.* entity.");
         }
-
         if (Array.isArray(config.strip)) {
           throw new Error("Multiple strip values are supported in YAML only.");
         }
-
         if (Array.isArray(config.status)) {
           throw new Error("Multiple status values are supported in YAML only.");
         }
@@ -225,18 +226,15 @@ class FilteredTodoCard extends HTMLElement {
           (field) => !["summary", "description", "due"].includes(field)
         );
         if (unsupportedFields.length) {
-          throw new Error(
-            `Filters for ${unsupportedFields.join(", ")} are supported in YAML only.`
-          );
+          throw new Error(`Filters for ${unsupportedFields.join(", ")} are supported in YAML only.`);
         }
-
         if (filter.due && typeof filter.due === "object") {
           throw new Error("Due-date comparison objects are supported in YAML only.");
         }
 
         for (const field of ["summary", "description"]) {
           const rule = filter[field];
-          if (rule == null) continue;
+          if (rule == null || FilteredTodoCard._isEmptyValue(rule)) continue;
           if (typeof rule !== "object" || Array.isArray(rule)) {
             throw new Error(`${field} shorthand filters are supported in YAML only.`);
           }
@@ -249,35 +247,26 @@ class FilteredTodoCard extends HTMLElement {
   }
 
   static getStubConfig(hass) {
-    const entity = Object.keys(hass?.states || {}).find((entityId) =>
-      entityId.startsWith("todo.")
-    );
-
+    const entity = Object.keys(hass?.states || {}).find((entityId) => entityId.startsWith("todo."));
     return {
       entity: entity || "todo.tasks",
-      filter: {
-        due: "today",
-      },
+      filter: { due: "today" },
     };
   }
 
   setConfig(config) {
-    if (!config || !config.entity) {
-      throw new Error("Filtered Todo Card requires an entity");
-    }
-
+    if (!config || !config.entity) throw new Error("Filtered Todo Card requires an entity");
     if (!String(config.entity).startsWith("todo.")) {
       throw new Error("Filtered Todo Card entity must be a todo.* entity");
     }
-
     if (config.filter && (typeof config.filter !== "object" || Array.isArray(config.filter))) {
       throw new Error("filter must be an object");
     }
 
     this._clearRefreshTimer();
+    this._removeCacheListener();
 
     const cleanedConfig = FilteredTodoCard._cleanConfig(config);
-
     this.config = {
       filter: {},
       status: "needs_action",
@@ -287,112 +276,230 @@ class FilteredTodoCard extends HTMLElement {
       empty_text: "Nothing due",
       hide_empty: false,
       allow_complete: true,
-      refresh_interval: 30,
+      refresh_interval: FilteredTodoCard.DEFAULT_REFRESH_INTERVAL,
       case_sensitive: false,
       ...cleanedConfig,
     };
 
     this.items = [];
-    this.loading = true;
     this.error = null;
-    this._loaded = false;
-    this._lastEntityUpdate = null;
+    this._started = false;
+    this._hasData = false;
+    this._fetchedAt = 0;
+    this._sourceMarkerAtFetch = null;
+    this._lastObservedSourceMarker = null;
     this._pending = new Set();
+    this._cacheKey = this._buildCacheKey();
+    this._hydrateCache();
+    this._addCacheListener();
 
-    if (this._hass) {
-      this._start();
-    }
+    if (this._hass) this._start();
   }
 
   set hass(hass) {
     this._hass = hass;
-
     if (!this.config) return;
 
-    const stateObj = hass.states?.[this.config.entity];
-    const entityUpdate = stateObj?.last_updated || stateObj?.last_changed || null;
-
-    if (!this._loaded) {
+    if (!this._started) {
       this._start();
       return;
     }
 
-    if (entityUpdate && this._lastEntityUpdate && entityUpdate !== this._lastEntityUpdate) {
-      this._lastEntityUpdate = entityUpdate;
-      this.loadItems();
-    } else if (entityUpdate && !this._lastEntityUpdate) {
-      this._lastEntityUpdate = entityUpdate;
+    const marker = this._sourceMarker();
+    if (marker && marker !== this._lastObservedSourceMarker) {
+      this._lastObservedSourceMarker = marker;
+      if (marker !== this._sourceMarkerAtFetch) {
+        this._refreshItems("source-update");
+      }
     }
   }
 
   connectedCallback() {
-    if (this.config && this._hass && !this._loaded) {
-      this._start();
-    }
+    if (this.config && this._hass && !this._started) this._start();
   }
 
   disconnectedCallback() {
     this._clearRefreshTimer();
+    this._removeCacheListener();
   }
 
-  _start() {
-    if (this._loaded) return;
-
-    this._loaded = true;
-    const stateObj = this._hass.states?.[this.config.entity];
-    this._lastEntityUpdate = stateObj?.last_updated || stateObj?.last_changed || null;
-
-    this.render();
-    this.loadItems();
-    this._setRefreshTimer();
+  _buildCacheKey() {
+    const status = Array.isArray(this.config.status)
+      ? [...this.config.status].sort()
+      : this.config.status;
+    return `filtered-todo-card:v${FilteredTodoCard.CACHE_VERSION}:${this.config.entity}:${JSON.stringify(status)}`;
   }
 
-  _setRefreshTimer() {
-    this._clearRefreshTimer();
-
-    const seconds = Number(this.config.refresh_interval);
-    if (!Number.isFinite(seconds) || seconds <= 0) return;
-
-    this._refreshTimer = window.setInterval(() => {
-      this.loadItems();
-    }, Math.max(seconds, 5) * 1000);
+  _sourceMarker() {
+    const stateObj = this._hass?.states?.[this.config.entity];
+    return stateObj?.last_reported || stateObj?.last_updated || stateObj?.last_changed || null;
   }
 
-  _clearRefreshTimer() {
-    if (this._refreshTimer) {
-      window.clearInterval(this._refreshTimer);
-      this._refreshTimer = null;
+  _hydrateCache() {
+    const memory = FilteredTodoCard._memoryCache.get(this._cacheKey);
+    if (memory && Array.isArray(memory.items)) {
+      this._applyCache(memory);
+      return;
+    }
+
+    try {
+      const raw = window.localStorage?.getItem(this._cacheKey);
+      if (!raw) return;
+      const cached = JSON.parse(raw);
+      if (!cached || !Array.isArray(cached.items)) return;
+      FilteredTodoCard._memoryCache.set(this._cacheKey, cached);
+      this._applyCache(cached);
+    } catch (error) {
+      console.debug("Filtered Todo Card: unable to read browser cache", error);
     }
   }
 
-  async loadItems() {
-    if (!this._hass || !this.config || this._loadingPromise) return;
+  _applyCache(cached) {
+    this.items = cached.items || [];
+    this._hasData = true;
+    this._fetchedAt = Number(cached.fetchedAt) || 0;
+    this._sourceMarkerAtFetch = cached.sourceMarker || null;
+  }
 
-    this._loadingPromise = (async () => {
+  _saveCache({ broadcast = true } = {}) {
+    const cached = {
+      items: this.items,
+      fetchedAt: this._fetchedAt,
+      sourceMarker: this._sourceMarkerAtFetch,
+    };
+    FilteredTodoCard._memoryCache.set(this._cacheKey, cached);
+
+    try {
+      window.localStorage?.setItem(this._cacheKey, JSON.stringify(cached));
+    } catch (error) {
+      console.debug("Filtered Todo Card: unable to write browser cache", error);
+    }
+
+    if (broadcast) {
+      window.dispatchEvent(
+        new CustomEvent("filtered-todo-card-cache-updated", {
+          detail: { key: this._cacheKey },
+        })
+      );
+    }
+  }
+
+  _addCacheListener() {
+    if (this._cacheListener) return;
+    this._cacheListener = (event) => {
+      if (event.detail?.key !== this._cacheKey) return;
+      const cached = FilteredTodoCard._memoryCache.get(this._cacheKey);
+      if (!cached) return;
+      this._applyCache(cached);
+      this.render();
+      this._scheduleFallbackRefresh();
+    };
+    window.addEventListener("filtered-todo-card-cache-updated", this._cacheListener);
+  }
+
+  _removeCacheListener() {
+    if (!this._cacheListener) return;
+    window.removeEventListener("filtered-todo-card-cache-updated", this._cacheListener);
+    this._cacheListener = null;
+  }
+
+  _start() {
+    if (this._started) return;
+    this._started = true;
+
+    const marker = this._sourceMarker();
+    this._lastObservedSourceMarker = marker;
+
+    this.render();
+
+    const refreshMs = this._refreshIntervalMs();
+    const cacheAge = this._fetchedAt ? Date.now() - this._fetchedAt : Number.POSITIVE_INFINITY;
+    const sourceChanged = Boolean(marker && this._sourceMarkerAtFetch && marker !== this._sourceMarkerAtFetch);
+
+    if (!this._hasData || sourceChanged || (refreshMs > 0 && cacheAge >= refreshMs)) {
+      this._refreshItems(!this._hasData ? "initial" : sourceChanged ? "source-update" : "fallback");
+    } else {
+      this._scheduleFallbackRefresh();
+    }
+  }
+
+  _refreshIntervalMs() {
+    const seconds = Number(this.config.refresh_interval);
+    if (!Number.isFinite(seconds) || seconds <= 0) return 0;
+    return Math.max(seconds, 30) * 1000;
+  }
+
+  _scheduleFallbackRefresh() {
+    this._clearRefreshTimer();
+    const interval = this._refreshIntervalMs();
+    if (!interval) return;
+
+    const age = this._fetchedAt ? Date.now() - this._fetchedAt : interval;
+    const delay = Math.max(1000, interval - age);
+    this._refreshTimer = window.setTimeout(() => {
+      this._refreshItems("fallback");
+    }, delay);
+  }
+
+  _clearRefreshTimer() {
+    if (!this._refreshTimer) return;
+    window.clearTimeout(this._refreshTimer);
+    this._refreshTimer = null;
+  }
+
+  async _refreshItems(reason = "manual") {
+    if (!this._hass || !this.config) return;
+
+    const existing = FilteredTodoCard._inflight.get(this._cacheKey);
+    if (existing) {
       try {
-        const result = await this._hass.callService(
-          "todo",
-          "get_items",
-          { status: this.config.status },
-          { entity_id: this.config.entity },
-          false,
-          true
-        );
-
-        const response = result?.response ?? result;
-        this.items = response?.[this.config.entity]?.items ?? [];
+        await existing;
+        const cached = FilteredTodoCard._memoryCache.get(this._cacheKey);
+        if (cached) this._applyCache(cached);
         this.error = null;
-      } catch (error) {
-        console.error("Filtered Todo Card: unable to load items", error);
-        this.error = error instanceof Error ? error.message : String(error);
-      } finally {
-        this.loading = false;
-        this._loadingPromise = null;
         this.render();
+      } catch (_error) {
+      } finally {
+        this._scheduleFallbackRefresh();
       }
+      return;
+    }
+
+    const promise = (async () => {
+      const result = await this._hass.callService(
+        "todo",
+        "get_items",
+        { status: this.config.status },
+        { entity_id: this.config.entity },
+        false,
+        true
+      );
+
+      const response = result?.response ?? result;
+      this.items = response?.[this.config.entity]?.items ?? [];
+      this._hasData = true;
+      this._fetchedAt = Date.now();
+      this._sourceMarkerAtFetch = this._sourceMarker();
+      this._lastObservedSourceMarker = this._sourceMarkerAtFetch;
+      this.error = null;
+      this._saveCache();
+      return this.items;
     })();
 
-    return this._loadingPromise;
+    FilteredTodoCard._inflight.set(this._cacheKey, promise);
+
+    try {
+      await promise;
+    } catch (error) {
+      console.error(`Filtered Todo Card: unable to refresh items (${reason})`, error);
+      this.error = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (FilteredTodoCard._inflight.get(this._cacheKey) === promise) {
+        FilteredTodoCard._inflight.delete(this._cacheKey);
+      }
+      this.render();
+      this._scheduleFallbackRefresh();
+    }
   }
 
   _normalise(value) {
@@ -416,11 +523,9 @@ class FilteredTodoCard extends HTMLElement {
         if (exists !== Boolean(expectedRaw)) return false;
         continue;
       }
-
       if (FilteredTodoCard._isEmptyValue(expectedRaw)) continue;
 
       const expected = this._normalise(expectedRaw);
-
       switch (operator) {
         case "equals":
           if (normalised !== expected) return false;
@@ -455,21 +560,18 @@ class FilteredTodoCard extends HTMLElement {
           return false;
       }
     }
-
     return true;
   }
 
   _dateKey(date) {
     if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
 
-    const timeZone = this._hass?.config?.time_zone;
     const formatter = new Intl.DateTimeFormat("en", {
-      timeZone,
+      timeZone: this._hass?.config?.time_zone,
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
     });
-
     const parts = formatter.formatToParts(date);
     const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
     return `${values.year}-${values.month}-${values.day}`;
@@ -481,23 +583,19 @@ class FilteredTodoCard extends HTMLElement {
 
   _offsetDateKey(dateKey, days) {
     const [year, month, day] = dateKey.split("-").map(Number);
-    const date = new Date(Date.UTC(year, month - 1, day + days));
-    return date.toISOString().slice(0, 10);
+    return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
   }
 
   _dueDateKey(due) {
     if (!due) return null;
-
     const text = String(due);
     if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
-
     return this._dateKey(new Date(text));
   }
 
   _resolveDueToken(token) {
     const today = this._todayKey();
     if (!today) return null;
-
     if (token === "today") return { type: "equals", value: today };
     if (token === "tomorrow") return { type: "equals", value: this._offsetDateKey(today, 1) };
     if (token === "overdue") return { type: "before", value: today };
@@ -506,19 +604,16 @@ class FilteredTodoCard extends HTMLElement {
     if (token === "any") return { type: "any" };
     if (token === "none") return { type: "none" };
     if (/^\d{4}-\d{2}-\d{2}$/.test(token)) return { type: "equals", value: token };
-
     return null;
   }
 
   _matchDueRule(due, rule) {
     if (FilteredTodoCard._isEmptyValue(rule)) return true;
-
     const dueKey = this._dueDateKey(due);
 
     if (typeof rule === "string") {
       const resolved = this._resolveDueToken(rule);
       if (!resolved) return false;
-
       switch (resolved.type) {
         case "any":
           return dueKey !== null;
@@ -537,24 +632,19 @@ class FilteredTodoCard extends HTMLElement {
       }
     }
 
-    if (typeof rule !== "object" || Array.isArray(rule)) {
-      return false;
-    }
+    if (typeof rule !== "object" || Array.isArray(rule)) return false;
 
     for (const [operator, expectedRaw] of Object.entries(rule)) {
       if (operator === "exists") {
         if ((dueKey !== null) !== Boolean(expectedRaw)) return false;
         continue;
       }
-
       if (FilteredTodoCard._isEmptyValue(expectedRaw)) continue;
 
       const expectedToken = String(expectedRaw);
       const resolved = this._resolveDueToken(expectedToken);
       const expected = resolved?.value ?? expectedToken;
-
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(expected)) return false;
-      if (dueKey === null) return false;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(expected) || dueKey === null) return false;
 
       switch (operator) {
         case "equals":
@@ -580,30 +670,24 @@ class FilteredTodoCard extends HTMLElement {
           return false;
       }
     }
-
     return true;
   }
 
   _matches(item) {
     const filter = this.config.filter || {};
-
     return Object.entries(filter).every(([field, rule]) => {
       if (FilteredTodoCard._isEmptyValue(rule)) return true;
-
       if (field === "due") return this._matchDueRule(item.due, rule);
-
       if (!["summary", "description", "uid", "status"].includes(field)) {
         console.warn(`Filtered Todo Card: unknown filter field '${field}'`);
         return false;
       }
-
       return this._matchTextRule(item[field], rule);
     });
   }
 
   _sortItems(items) {
     const sorted = [...items];
-
     switch (this.config.sort) {
       case "none":
         return sorted;
@@ -632,12 +716,10 @@ class FilteredTodoCard extends HTMLElement {
   _stripSummary(summary) {
     let result = String(summary || "");
     const strips = Array.isArray(this.config.strip) ? this.config.strip : [this.config.strip];
-
     for (const strip of strips.filter((value) => value != null && String(value).length > 0)) {
       const escaped = String(strip).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       result = result.replace(new RegExp(escaped, "gi"), "");
     }
-
     return result.replace(/\s{2,}/g, " ").trim();
   }
 
@@ -648,7 +730,6 @@ class FilteredTodoCard extends HTMLElement {
 
     const date = new Date(text);
     if (Number.isNaN(date.getTime())) return text;
-
     try {
       return new Intl.DateTimeFormat(this._hass?.locale?.language, {
         timeZone: this._hass?.config?.time_zone,
@@ -681,41 +762,36 @@ class FilteredTodoCard extends HTMLElement {
       );
 
       this.items = this.items.filter((item) => item.uid !== uid);
+      this._hasData = true;
+      this._fetchedAt = Date.now();
+      this._sourceMarkerAtFetch = this._sourceMarker();
       this.error = null;
+      this._saveCache();
     } catch (error) {
       console.error("Filtered Todo Card: unable to complete item", error);
       this.error = error instanceof Error ? error.message : String(error);
     } finally {
       this._pending.delete(uid);
       this.render();
-      window.setTimeout(() => this.loadItems(), 500);
+      window.setTimeout(() => this._refreshItems("post-update"), 500);
     }
   }
 
   render() {
-    if (!this.shadowRoot) {
-      this.attachShadow({ mode: "open" });
-    }
-
+    if (!this.shadowRoot) this.attachShadow({ mode: "open" });
     if (!this.config) return;
 
     const stateObj = this._hass?.states?.[this.config.entity];
     const title = this.config.title ?? stateObj?.attributes?.friendly_name ?? this.config.entity;
     const items = this._filteredItems();
-    const hideCard =
-      Boolean(this.config.hide_empty) &&
-      !this.loading &&
-      !this.error &&
-      items.length === 0;
-
+    const hideCard = Boolean(this.config.hide_empty) && this._hasData && !this.error && items.length === 0;
     this.style.display = hideCard ? "none" : "";
 
     let content = "";
-
-    if (this.loading) {
-      content = `<div class="message">Loading…</div>`;
-    } else if (this.error) {
+    if (this.error && !this._hasData) {
       content = `<div class="message error">${this._escapeHtml(this.error)}</div>`;
+    } else if (!this._hasData) {
+      content = "";
     } else if (items.length === 0) {
       content = `<div class="message">${this._escapeHtml(this.config.empty_text)}</div>`;
     } else {
@@ -734,12 +810,8 @@ class FilteredTodoCard extends HTMLElement {
               ? `<div class="description">${this._escapeHtml(item.description)}</div>`
               : "";
           const checkbox = this.config.allow_complete
-            ? `<button class="complete" data-uid="${encodedUid}" ${
-                pending ? "disabled" : ""
-              } aria-label="Mark item complete">
-                 <ha-icon icon="${
-                   pending ? "mdi:progress-clock" : "mdi:checkbox-blank-outline"
-                 }"></ha-icon>
+            ? `<button class="complete" data-uid="${encodedUid}" ${pending ? "disabled" : ""} aria-label="Mark item complete">
+                 <ha-icon icon="${pending ? "mdi:progress-clock" : "mdi:checkbox-blank-outline"}"></ha-icon>
                </button>`
             : "";
 
@@ -757,25 +829,15 @@ class FilteredTodoCard extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>
-        :host {
-          display: block;
-        }
-
-        ha-card {
-          overflow: hidden;
-        }
-
+        :host { display: block; }
+        ha-card { overflow: hidden; }
         .header {
           padding: 16px 16px 8px;
           color: var(--primary-text-color);
           font-size: var(--ha-card-header-font-size, 20px);
           font-weight: 500;
         }
-
-        .items {
-          padding: 4px 16px 12px;
-        }
-
+        .items { padding: 4px 16px 12px; }
         .todo-row {
           display: flex;
           align-items: flex-start;
@@ -784,11 +846,7 @@ class FilteredTodoCard extends HTMLElement {
           padding: 8px 0;
           border-top: 1px solid var(--divider-color);
         }
-
-        .todo-row:first-child {
-          border-top: 0;
-        }
-
+        .todo-row:first-child { border-top: 0; }
         .complete {
           display: flex;
           align-items: center;
@@ -804,25 +862,10 @@ class FilteredTodoCard extends HTMLElement {
           color: var(--primary-color);
           cursor: pointer;
         }
-
-        .complete:hover:not(:disabled) {
-          background: var(--secondary-background-color);
-        }
-
-        .complete:disabled {
-          cursor: default;
-          opacity: 0.6;
-        }
-
-        .complete ha-icon {
-          --mdc-icon-size: 26px;
-        }
-
-        .todo-content {
-          min-width: 0;
-          flex: 1;
-        }
-
+        .complete:hover:not(:disabled) { background: var(--secondary-background-color); }
+        .complete:disabled { cursor: default; opacity: 0.6; }
+        .complete ha-icon { --mdc-icon-size: 26px; }
+        .todo-content { min-width: 0; flex: 1; }
         .summary {
           display: flex;
           align-items: center;
@@ -832,35 +875,17 @@ class FilteredTodoCard extends HTMLElement {
           line-height: 1.35;
           overflow-wrap: anywhere;
         }
-
-        .meta,
-        .description,
-        .message {
+        .meta, .description, .message {
           color: var(--secondary-text-color);
           font-size: 13px;
           line-height: 1.35;
         }
-
-        .meta,
-        .description {
-          margin-top: 3px;
-        }
-
-        .message {
-          padding: 12px 0;
-        }
-
-        .error {
-          color: var(--error-color);
-        }
+        .meta, .description { margin-top: 3px; }
+        .message { padding: 12px 0; }
+        .error { color: var(--error-color); }
       </style>
-
       <ha-card>
-        ${
-          title === false || title === ""
-            ? ""
-            : `<div class="header">${this._escapeHtml(title)}</div>`
-        }
+        ${title === false || title === "" ? "" : `<div class="header">${this._escapeHtml(title)}</div>`}
         <div class="items">${content}</div>
       </ha-card>
     `;
@@ -884,7 +909,6 @@ if (!customElements.get("filtered-todo-card")) {
 }
 
 window.customCards = window.customCards || [];
-
 if (!window.customCards.some((card) => card.type === "filtered-todo-card")) {
   window.customCards.push({
     type: "filtered-todo-card",
@@ -894,14 +918,11 @@ if (!window.customCards.some((card) => card.type === "filtered-todo-card")) {
     documentationURL: "https://github.com/jstride/filtered-todo-card",
     getEntitySuggestion: (_hass, entityId) => {
       if (entityId?.split(".")[0] !== "todo") return null;
-
       return {
         config: {
           type: "custom:filtered-todo-card",
           entity: entityId,
-          filter: {
-            due: "today",
-          },
+          filter: { due: "today" },
         },
       };
     },
