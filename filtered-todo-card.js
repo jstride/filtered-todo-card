@@ -133,8 +133,10 @@ class FilteredTodoCard extends HTMLElement {
                 },
               },
             },
+            { name: "show_summary", selector: { boolean: {} } },
             { name: "show_due", selector: { boolean: {} } },
             { name: "show_description", selector: { boolean: {} } },
+            { name: "show_completed", selector: { boolean: {} } },
             { name: "hide_empty", selector: { boolean: {} } },
             { name: "allow_complete", selector: { boolean: {} } },
             { name: "empty_text", selector: { text: {} } },
@@ -181,8 +183,10 @@ class FilteredTodoCard extends HTMLElement {
           due: "Due date",
           strip: "Strip from displayed summary",
           sort: "Sort order",
+          show_summary: "Show summary",
           show_due: "Show due date",
           show_description: "Show description",
+          show_completed: "Show completed tasks",
           hide_empty: "Hide card when empty",
           allow_complete: "Allow completing items",
           empty_text: "Empty message",
@@ -271,8 +275,10 @@ class FilteredTodoCard extends HTMLElement {
       filter: {},
       status: "needs_action",
       sort: "due_asc",
+      show_summary: true,
       show_due: false,
       show_description: false,
+      show_completed: false,
       empty_text: "Nothing due",
       hide_empty: false,
       allow_complete: true,
@@ -323,10 +329,20 @@ class FilteredTodoCard extends HTMLElement {
     this._removeCacheListener();
   }
 
+  _requestedStatus() {
+    if (!this.config.show_completed) return this.config.status;
+
+    const statuses = Array.isArray(this.config.status)
+      ? [...this.config.status]
+      : [this.config.status];
+
+    if (!statuses.includes("needs_action")) statuses.push("needs_action");
+    if (!statuses.includes("completed")) statuses.push("completed");
+    return statuses.sort();
+  }
+
   _buildCacheKey() {
-    const status = Array.isArray(this.config.status)
-      ? [...this.config.status].sort()
-      : this.config.status;
+    const status = this._requestedStatus();
     return `filtered-todo-card:v${FilteredTodoCard.CACHE_VERSION}:${this.config.entity}:${JSON.stringify(status)}`;
   }
 
@@ -469,7 +485,7 @@ class FilteredTodoCard extends HTMLElement {
       const result = await this._hass.callService(
         "todo",
         "get_items",
-        { status: this.config.status },
+        { status: this._requestedStatus() },
         { entity_id: this.config.entity },
         false,
         true
@@ -761,7 +777,13 @@ class FilteredTodoCard extends HTMLElement {
         { entity_id: this.config.entity }
       );
 
-      this.items = this.items.filter((item) => item.uid !== uid);
+      if (this.config.show_completed) {
+        this.items = this.items.map((item) =>
+          item.uid === uid ? { ...item, status: "completed" } : item
+        );
+      } else {
+        this.items = this.items.filter((item) => item.uid !== uid);
+      }
       this._hasData = true;
       this._fetchedAt = Date.now();
       this._sourceMarkerAtFetch = this._sourceMarker();
@@ -800,25 +822,29 @@ class FilteredTodoCard extends HTMLElement {
           const uid = String(item.uid || "");
           const encodedUid = encodeURIComponent(uid);
           const pending = this._pending.has(uid);
-          const summary = this._escapeHtml(this._stripSummary(item.summary));
+          const completed = item.status === "completed";
+          const summaryText = this._escapeHtml(this._stripSummary(item.summary));
+          const summary = this.config.show_summary
+            ? `<div class="summary">${summaryText}</div>`
+            : "";
           const due =
             this.config.show_due && item.due
               ? `<div class="meta">${this._escapeHtml(this._formatDue(item.due))}</div>`
               : "";
           const description =
             this.config.show_description && item.description
-              ? `<div class="description">${this._escapeHtml(item.description)}</div>`
+              ? `<div class="description${this.config.show_summary ? "" : " primary-description"}">${this._escapeHtml(item.description)}</div>`
               : "";
           const checkbox = this.config.allow_complete
-            ? `<button class="complete" data-uid="${encodedUid}" ${pending ? "disabled" : ""} aria-label="Mark item complete">
-                 <ha-icon icon="${pending ? "mdi:progress-clock" : "mdi:checkbox-blank-outline"}"></ha-icon>
+            ? `<button class="complete${completed ? " completed" : ""}" data-uid="${encodedUid}" ${pending || completed ? "disabled" : ""} aria-label="${completed ? "Completed" : "Mark item complete"}">
+                 <ha-icon icon="${pending ? "mdi:progress-clock" : completed ? "mdi:checkbox-marked" : "mdi:checkbox-blank-outline"}"></ha-icon>
                </button>`
             : "";
 
           return `<div class="todo-row">
                     ${checkbox}
                     <div class="todo-content">
-                      <div class="summary">${summary}</div>
+                      ${summary}
                       ${due}
                       ${description}
                     </div>
@@ -864,6 +890,7 @@ class FilteredTodoCard extends HTMLElement {
         }
         .complete:hover:not(:disabled) { background: var(--secondary-background-color); }
         .complete:disabled { cursor: default; opacity: 0.6; }
+        .complete.completed:disabled { opacity: 1; }
         .complete ha-icon { --mdc-icon-size: 26px; }
         .todo-content { min-width: 0; flex: 1; }
         .summary {
@@ -881,6 +908,14 @@ class FilteredTodoCard extends HTMLElement {
           line-height: 1.35;
         }
         .meta, .description { margin-top: 3px; }
+        .description.primary-description {
+          display: flex;
+          align-items: center;
+          min-height: 36px;
+          margin-top: 0;
+          color: var(--primary-text-color);
+          font-size: 16px;
+        }
         .message { padding: 12px 0; }
         .error { color: var(--error-color); }
       </style>

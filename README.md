@@ -13,7 +13,9 @@ The source to-do list remains authoritative. The card reads items through Home A
 - Case-insensitive text filtering by default
 - Optional regex filtering
 - Strip tags or prefixes from displayed task names without modifying the source task
-- Mark tasks complete from the card
+- Show or hide the task summary independently of the description
+- Optionally include completed tasks alongside active tasks
+- Mark active tasks complete from the card
 - Sort by due date or summary
 - Browser cache for immediate rendering on subsequent dashboard loads
 - Shared in-memory cache when multiple cards use the same source list
@@ -61,7 +63,8 @@ The visual editor supports:
 - Due-date presets: today, tomorrow, overdue, today or overdue, future, has a due date, and no due date
 - Text stripping
 - Sort order
-- Due-date and description display
+- Summary, due-date, and description display
+- Optional completed-task display
 - Empty-card behaviour
 - Completion controls
 - Item status
@@ -84,6 +87,32 @@ strip: "[Work]"
 ```
 
 This displays incomplete items from `todo.tasks` that are due today and contain `[Work]` in the summary. The tag is removed from the displayed summary only - the source task is unchanged.
+
+## Description-only example
+
+The summary is shown by default. To use the description as the primary displayed text instead:
+
+```yaml
+type: custom:filtered-todo-card
+entity: todo.tasks
+title: Notes
+filter:
+  due: today
+show_summary: false
+show_description: true
+```
+
+## Showing completed tasks
+
+Completed items are hidden by default. To show them alongside active items:
+
+```yaml
+type: custom:filtered-todo-card
+entity: todo.tasks
+show_completed: true
+```
+
+The card requests both `needs_action` and `completed` items in a single `todo.get_items` call. Completed items use a checked icon and remain visible when `show_completed` is enabled.
 
 ## Example: multiple filtered cards from one list
 
@@ -168,8 +197,10 @@ The browser cache is only a display cache. Home Assistant and the underlying tod
 | `status` | No | `needs_action` | Status requested from `todo.get_items`. Can also be a list in YAML |
 | `strip` | No | | String or list of literal strings to remove from displayed summaries |
 | `sort` | No | `due_asc` | `due_asc`, `due_desc`, `summary_asc`, `summary_desc`, or `none` |
-| `show_due` | No | `false` | Show the source due value below the summary |
+| `show_summary` | No | `true` | Show the item summary. Disable for description-only cards |
+| `show_due` | No | `false` | Show the source due value |
 | `show_description` | No | `false` | Show item descriptions |
+| `show_completed` | No | `false` | Include completed items alongside the normally requested status |
 | `empty_text` | No | `Nothing due` | Text displayed when no items match |
 | `hide_empty` | No | `false` | Hide the whole card when no items match |
 | `allow_complete` | No | `true` | Show a completion checkbox |
