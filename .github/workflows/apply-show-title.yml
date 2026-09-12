@@ -16,81 +16,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Update card and documentation
+      - name: Update card
         run: |
-          python - <<'PY'
-          from pathlib import Path
+          sed -i '/{ name: "show_summary", selector: { boolean: {} } },/i\            { name: "show_title", selector: { boolean: {} } },' filtered-todo-card.js
+          sed -i '/show_summary: "Show summary",/i\          show_title: "Show title",' filtered-todo-card.js
+          sed -i '/      show_summary: true,/i\      show_title: true,' filtered-todo-card.js
+          sed -i 's/${title === false || title === "" ? "" : `/${!this.config.show_title || title === false || title === "" ? "" : `/' filtered-todo-card.js
 
-          js_path = Path('filtered-todo-card.js')
-          js = js_path.read_text()
+      - name: Update README
+        run: |
+          sed -i '/- Summary, due-date, and description display/i\- Card title display' README.md
+          sed -i '/| `show_summary` | No | `true` | Show the item summary/i\| `show_title` | No | `true` | Show the card title |' README.md
+          sed -i '/## Description-only example/i\## Hiding the card title\n\nThe card title is shown by default. To hide it while keeping the card contents:\n\n```yaml\ntype: custom:filtered-todo-card\nentity: todo.tasks\ntitle: School\nshow_title: false\n```\n' README.md
 
-          replacements = [
-              (
-                  '            { name: "show_summary", selector: { boolean: {} } },\n            { name: "show_due", selector: { boolean: {} } },',
-                  '            { name: "show_title", selector: { boolean: {} } },\n            { name: "show_summary", selector: { boolean: {} } },\n            { name: "show_due", selector: { boolean: {} } },'
-              ),
-              (
-                  '          show_summary: "Show summary",\n          show_due: "Show due date",',
-                  '          show_title: "Show title",\n          show_summary: "Show summary",\n          show_due: "Show due date",'
-              ),
-              (
-                  '      sort: "due_asc",\n      show_summary: true,\n      show_due: false,',
-                  '      sort: "due_asc",\n      show_title: true,\n      show_summary: true,\n      show_due: false,'
-              ),
-              (
-                  '${title === false || title === "" ? "" : `<div class="header">${this._escapeHtml(title)}</div>`}',
-                  '${!this.config.show_title || title === false || title === "" ? "" : `<div class="header">${this._escapeHtml(title)}</div>`}'
-              ),
-          ]
-
-          for old, new in replacements:
-              count = js.count(old)
-              if count != 1:
-                  raise SystemExit(f'Expected exactly one JS match, got {count}: {old[:80]!r}')
-              js = js.replace(old, new, 1)
-
-          js_path.write_text(js)
-
-          readme_path = Path('README.md')
-          readme = readme_path.read_text()
-
-          replacements = [
-              (
-                  '- Sort order\n- Summary, due-date, and description display',
-                  '- Sort order\n- Card title display\n- Summary, due-date, and description display'
-              ),
-              (
-                  '| `sort` | No | `due_asc` | `due_asc`, `due_desc`, `summary_asc`, `summary_desc`, or `none` |\n| `show_summary` | No | `true` | Show the item summary. Disable for description-only cards |',
-                  '| `sort` | No | `due_asc` | `due_asc`, `due_desc`, `summary_asc`, `summary_desc`, or `none` |\n| `show_title` | No | `true` | Show the card title |\n| `show_summary` | No | `true` | Show the item summary. Disable for description-only cards |'
-              ),
-          ]
-
-          for old, new in replacements:
-              count = readme.count(old)
-              if count != 1:
-                  raise SystemExit(f'Expected exactly one README match, got {count}: {old[:80]!r}')
-              readme = readme.replace(old, new, 1)
-
-          marker = '## Description-only example\n'
-          addition = '''## Hiding the card title
-
-The card title is shown by default. To hide it while keeping the card contents:
-
-```yaml
-type: custom:filtered-todo-card
-entity: todo.tasks
-title: School
-show_title: false
-```
-
-'''
-          if marker not in readme:
-              raise SystemExit('README insertion marker not found')
-          readme = readme.replace(marker, addition + marker, 1)
-          readme_path.write_text(readme)
-          PY
-
-      - name: Remove one-shot workflow and commit
+      - name: Remove workflow and commit
         run: |
           rm .github/workflows/apply-show-title.yml
           git config user.name "github-actions[bot]"
