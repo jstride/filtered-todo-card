@@ -133,6 +133,7 @@ class FilteredTodoCard extends HTMLElement {
                 },
               },
             },
+            { name: "show_title", selector: { boolean: {} } },
             { name: "show_summary", selector: { boolean: {} } },
             { name: "show_due", selector: { boolean: {} } },
             { name: "show_description", selector: { boolean: {} } },
@@ -183,6 +184,7 @@ class FilteredTodoCard extends HTMLElement {
           due: "Due date",
           strip: "Strip from displayed summary",
           sort: "Sort order",
+          show_title: "Show title",
           show_summary: "Show summary",
           show_due: "Show due date",
           show_description: "Show description",
@@ -275,6 +277,7 @@ class FilteredTodoCard extends HTMLElement {
       filter: {},
       status: "needs_action",
       sort: "due_asc",
+      show_title: true,
       show_summary: true,
       show_due: false,
       show_description: false,
@@ -920,7 +923,7 @@ class FilteredTodoCard extends HTMLElement {
         .error { color: var(--error-color); }
       </style>
       <ha-card>
-        ${title === false || title === "" ? "" : `<div class="header">${this._escapeHtml(title)}</div>`}
+        ${!this.config.show_title || title === false || title === "" ? "" : `<div class="header">${this._escapeHtml(title)}</div>`}
         <div class="items">${content}</div>
       </ha-card>
     `;

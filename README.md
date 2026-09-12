@@ -63,6 +63,7 @@ The visual editor supports:
 - Due-date presets: today, tomorrow, overdue, today or overdue, future, has a due date, and no due date
 - Text stripping
 - Sort order
+- Card title display
 - Summary, due-date, and description display
 - Optional completed-task display
 - Empty-card behaviour
@@ -87,6 +88,17 @@ strip: "[Work]"
 ```
 
 This displays incomplete items from `todo.tasks` that are due today and contain `[Work]` in the summary. The tag is removed from the displayed summary only - the source task is unchanged.
+
+## Hiding the card title
+
+The card title is shown by default. To hide it while keeping the card contents:
+
+```yaml
+type: custom:filtered-todo-card
+entity: todo.tasks
+title: School
+show_title: false
+```
 
 ## Description-only example
 
@@ -197,6 +209,7 @@ The browser cache is only a display cache. Home Assistant and the underlying tod
 | `status` | No | `needs_action` | Status requested from `todo.get_items`. Can also be a list in YAML |
 | `strip` | No | | String or list of literal strings to remove from displayed summaries |
 | `sort` | No | `due_asc` | `due_asc`, `due_desc`, `summary_asc`, `summary_desc`, or `none` |
+| `show_title` | No | `true` | Show the card title |
 | `show_summary` | No | `true` | Show the item summary. Disable for description-only cards |
 | `show_due` | No | `false` | Show the source due value |
 | `show_description` | No | `false` | Show item descriptions |
