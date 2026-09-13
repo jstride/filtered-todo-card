@@ -120,6 +120,7 @@ class FilteredTodoCard extends HTMLElement {
             { name: "strip", selector: { text: {} } },
             {
               name: "sort",
+              default: "due_asc",
               selector: {
                 select: {
                   options: [
@@ -133,14 +134,14 @@ class FilteredTodoCard extends HTMLElement {
                 },
               },
             },
-            { name: "show_title", selector: { boolean: {} } },
-            { name: "show_summary", selector: { boolean: {} } },
-            { name: "show_due", selector: { boolean: {} } },
-            { name: "show_description", selector: { boolean: {} } },
-            { name: "show_completed", selector: { boolean: {} } },
-            { name: "hide_empty", selector: { boolean: {} } },
-            { name: "allow_complete", selector: { boolean: {} } },
-            { name: "empty_text", selector: { text: {} } },
+            { name: "show_title", default: true, selector: { boolean: {} } },
+            { name: "show_summary", default: true, selector: { boolean: {} } },
+            { name: "show_due", default: false, selector: { boolean: {} } },
+            { name: "show_description", default: false, selector: { boolean: {} } },
+            { name: "show_completed", default: false, selector: { boolean: {} } },
+            { name: "hide_empty", default: false, selector: { boolean: {} } },
+            { name: "allow_complete", default: true, selector: { boolean: {} } },
+            { name: "empty_text", default: "Nothing due", selector: { text: {} } },
           ],
         },
         {
@@ -151,6 +152,7 @@ class FilteredTodoCard extends HTMLElement {
           schema: [
             {
               name: "status",
+              default: "needs_action",
               selector: {
                 select: {
                   options: [
@@ -163,6 +165,7 @@ class FilteredTodoCard extends HTMLElement {
             },
             {
               name: "refresh_interval",
+              default: 900,
               selector: {
                 number: {
                   min: 0,
@@ -173,7 +176,7 @@ class FilteredTodoCard extends HTMLElement {
                 },
               },
             },
-            { name: "case_sensitive", selector: { boolean: {} } },
+            { name: "case_sensitive", default: false, selector: { boolean: {} } },
           ],
         },
       ],
