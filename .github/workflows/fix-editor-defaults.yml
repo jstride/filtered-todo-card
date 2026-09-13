@@ -1,0 +1,41 @@
+name: Fix visual editor defaults
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/fix-editor-defaults.yml
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Align editor defaults with runtime
+        run: |
+          python -c "from pathlib import Path; p=Path('filtered-todo-card.js'); s=p.read_text(); old='{ name: \"show_title\", selector: { boolean: {} } }'; assert s.count(old)==1; s=s.replace(old, '{ name: \"show_title\", default: true, selector: { boolean: {} } }'); p.write_text(s)"
+          python -c "from pathlib import Path; p=Path('filtered-todo-card.js'); s=p.read_text(); old='{ name: \"show_summary\", selector: { boolean: {} } }'; assert s.count(old)==1; s=s.replace(old, '{ name: \"show_summary\", default: true, selector: { boolean: {} } }'); p.write_text(s)"
+          python -c "from pathlib import Path; p=Path('filtered-todo-card.js'); s=p.read_text(); old='{ name: \"show_due\", selector: { boolean: {} } }'; assert s.count(old)==1; s=s.replace(old, '{ name: \"show_due\", default: false, selector: { boolean: {} } }'); p.write_text(s)"
+          python -c "from pathlib import Path; p=Path('filtered-todo-card.js'); s=p.read_text(); old='{ name: \"show_description\", selector: { boolean: {} } }'; assert s.count(old)==1; s=s.replace(old, '{ name: \"show_description\", default: false, selector: { boolean: {} } }'); p.write_text(s)"
+          python -c "from pathlib import Path; p=Path('filtered-todo-card.js'); s=p.read_text(); old='{ name: \"show_completed\", selector: { boolean: {} } }'; assert s.count(old)==1; s=s.replace(old, '{ name: \"show_completed\", default: false, selector: { boolean: {} } }'); p.write_text(s)"
+          python -c "from pathlib import Path; p=Path('filtered-todo-card.js'); s=p.read_text(); old='{ name: \"hide_empty\", selector: { boolean: {} } }'; assert s.count(old)==1; s=s.replace(old, '{ name: \"hide_empty\", default: false, selector: { boolean: {} } }'); p.write_text(s)"
+          python -c "from pathlib import Path; p=Path('filtered-todo-card.js'); s=p.read_text(); old='{ name: \"allow_complete\", selector: { boolean: {} } }'; assert s.count(old)==1; s=s.replace(old, '{ name: \"allow_complete\", default: true, selector: { boolean: {} } }'); p.write_text(s)"
+          python -c "from pathlib import Path; p=Path('filtered-todo-card.js'); s=p.read_text(); old='{ name: \"empty_text\", selector: { text: {} } }'; assert s.count(old)==1; s=s.replace(old, '{ name: \"empty_text\", default: \"Nothing due\", selector: { text: {} } }'); p.write_text(s)"
+          python -c "from pathlib import Path; p=Path('filtered-todo-card.js'); s=p.read_text(); old='name: \"sort\",\n              selector:'; assert s.count(old)==1; s=s.replace(old, 'name: \"sort\",\n              default: \"due_asc\",\n              selector:', 1); p.write_text(s)"
+          python -c "from pathlib import Path; p=Path('filtered-todo-card.js'); s=p.read_text(); old='name: \"status\",\n              selector:'; assert s.count(old)==1; s=s.replace(old, 'name: \"status\",\n              default: \"needs_action\",\n              selector:', 1); p.write_text(s)"
+          python -c "from pathlib import Path; p=Path('filtered-todo-card.js'); s=p.read_text(); old='name: \"refresh_interval\",\n              selector:'; assert s.count(old)==1; s=s.replace(old, 'name: \"refresh_interval\",\n              default: 900,\n              selector:', 1); p.write_text(s)"
+          python -c "from pathlib import Path; p=Path('filtered-todo-card.js'); s=p.read_text(); old='{ name: \"case_sensitive\", selector: { boolean: {} } }'; assert s.count(old)==1; s=s.replace(old, '{ name: \"case_sensitive\", default: false, selector: { boolean: {} } }'); p.write_text(s)"
+
+      - name: Commit fix and remove workflow
+        run: |
+          rm .github/workflows/fix-editor-defaults.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add filtered-todo-card.js .github/workflows/fix-editor-defaults.yml
+          git commit -m "Align visual editor defaults with runtime"
+          git push
