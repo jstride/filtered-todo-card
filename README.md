@@ -16,6 +16,8 @@ The source to-do list remains authoritative. The card reads items through Home A
 - Show or hide the task summary independently of the description
 - Optionally include completed tasks alongside active tasks
 - Mark active tasks complete from the card
+- Compact 40px status icon mode with configurable MDI icon and colours for pending, completed, and missing tasks
+- Optionally reopen completed tasks from an icon (useful for reversing restrictions)
 - Sort by due date or summary
 - Browser cache for immediate rendering on subsequent dashboard loads
 - Shared in-memory cache when multiple cards use the same source list
@@ -68,6 +70,7 @@ The visual editor supports:
 - Optional completed-task display
 - Empty-card behaviour
 - Completion controls
+- Compact icon mode, icon name, three status colours, and completed-task reopening
 - Item status
 - Fallback refresh interval
 - Case-sensitive matching
@@ -172,6 +175,56 @@ cards:
 
 Cards using the same source entity and item status share one cache and one in-flight `todo.get_items` request. This avoids four cards making four identical requests when a dashboard opens.
 
+## Compact status icons
+
+Use `display: icon` to show one **40 x 40px**, background-free icon instead of a task list. It is suitable for placing beside a person avatar in a Home Assistant grid or horizontal stack. The icon changes colour as the to-do item is updated, without a template sensor or helper.
+
+- The card fetches both `needs_action` and `completed` items automatically in icon mode; `show_completed: true` is not required.
+- Outstanding tasks are tappable to complete. Completed tasks can also be tapped to return to `needs_action` with `allow_uncomplete: true`.
+- When no matching task exists, the `color_missing` icon is visible but disabled; `hide_empty` does not hide it.
+- If several tasks match, an outstanding task wins. Prefer filters that uniquely identify one task.
+- Icons remain grey/disabled until data loads, and the card preserves its usual cache and refresh behaviour.
+
+### Daily medication
+
+```yaml
+# Daddy: today's tablet from the Personal to-do list
+type: custom:filtered-todo-card
+entity: todo.personal
+filter:
+  summary:
+    equals: Tablet
+  due: today
+display: icon
+icon: mdi:pill
+color_pending: red
+color_completed: green
+color_missing: grey
+```
+
+Use `entity: todo.tilly` for Tilly's equivalent card. A missing task is grey, an outstanding tablet red, and a completed tablet green. The card does not create or reset the daily task.
+
+### Reversible iPad ban
+
+```yaml
+# A completed iPad task means a ban is active
+type: custom:filtered-todo-card
+entity: todo.tilly
+filter:
+  summary:
+    equals: iPad
+display: icon
+icon: mdi:tablet
+color_pending: green
+color_completed: red
+color_missing: green
+allow_uncomplete: true
+```
+
+Repeat with the appropriate to-do entity for each child. Tapping a green icon completes the `iPad` task and turns it red; tapping red reopens it and turns it green. A missing task is green but cannot be tapped until an `iPad` task exists. **Keep ban tasks persistent rather than resetting them daily** if a restriction must carry across days.
+
+Red and green use Home Assistant theme colours (`--error-color` and `--success-color`). Grey uses `--secondary-text-color`. Other basic CSS named colours and `#RRGGBB` hex colours are supported.
+
 ## Cache and refresh behaviour
 
 The card keeps the last successful unfiltered item list in browser storage. If no cache exists, the card shows `Loading…` while it retrieves the initial list. Once a cache exists, later dashboard loads render it immediately and keep it up to date silently in the background.
@@ -206,6 +259,12 @@ The browser cache is only a display cache. Home Assistant and the underlying tod
 | `entity` | Yes | | Source `todo.*` entity |
 | `title` | No | Entity friendly name | Card title |
 | `filter` | No | `{}` | Filter rules. All configured fields must match |
+| `display` | No | `list` | `list` or `icon` (compact 40px status icon) |
+| `icon` | No | `mdi:check-circle-outline` | Icon for `display: icon`, e.g. `mdi:pill` or `mdi:tablet` |
+| `color_pending` | No | `red` | Icon colour when an incomplete task matches |
+| `color_completed` | No | `green` | Icon colour when a completed task matches |
+| `color_missing` | No | `grey` | Icon colour when no task matches |
+| `allow_uncomplete` | No | `false` | Allow completed icons to be tapped to reopen the task |
 | `status` | No | `needs_action` | Status requested from `todo.get_items`. Can also be a list in YAML |
 | `strip` | No | | String or list of literal strings to remove from displayed summaries |
 | `sort` | No | `due_asc` | `due_asc`, `due_desc`, `summary_asc`, `summary_desc`, or `none` |
@@ -213,10 +272,10 @@ The browser cache is only a display cache. Home Assistant and the underlying tod
 | `show_summary` | No | `true` | Show the item summary. Disable for description-only cards |
 | `show_due` | No | `false` | Show the source due value |
 | `show_description` | No | `false` | Show item descriptions |
-| `show_completed` | No | `false` | Include completed items alongside the normally requested status |
+| `show_completed` | No | `false` | Include completed items in list mode (icon mode always loads both states) |
 | `empty_text` | No | `Nothing due` | Text displayed when no items match |
-| `hide_empty` | No | `false` | Hide the whole card when no items match |
-| `allow_complete` | No | `true` | Show a completion checkbox |
+| `hide_empty` | No | `false` | Hide the list card when no items match (ignored in icon mode) |
+| `allow_complete` | No | `true` | Show a completion checkbox in list mode; enable icon taps in icon mode |
 | `refresh_interval` | No | `900` | Fallback reconciliation interval in seconds. Set to `0` to disable it |
 | `case_sensitive` | No | `false` | Make text operators case-sensitive |
 
