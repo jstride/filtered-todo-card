@@ -113,7 +113,7 @@ class FilteredTodoCard extends HTMLElement {
         },
         {
           type: "expandable",
-          name: "display",
+          name: "appearance",
           title: "Display",
           flatten: true,
           schema: [
@@ -134,6 +134,19 @@ class FilteredTodoCard extends HTMLElement {
                 },
               },
             },
+            {
+              name: "display",
+              default: "list",
+              selector: { select: { options: [
+                { value: "list", label: "Task list" },
+                { value: "icon", label: "Compact icon" },
+              ], mode: "dropdown" } },
+            },
+            { name: "icon", selector: { text: {} } },
+            { name: "color_pending", selector: { text: {} } },
+            { name: "color_completed", selector: { text: {} } },
+            { name: "color_missing", selector: { text: {} } },
+            { name: "allow_uncomplete", default: false, selector: { boolean: {} } },
             { name: "show_title", default: true, selector: { boolean: {} } },
             { name: "show_summary", default: true, selector: { boolean: {} } },
             { name: "show_due", default: false, selector: { boolean: {} } },
@@ -184,6 +197,12 @@ class FilteredTodoCard extends HTMLElement {
         const labels = {
           entity: "To-do entity",
           title: "Title",
+          display: "Display mode",
+          icon: "Icon (e.g. mdi:pill)",
+          color_pending: "Outstanding colour",
+          color_completed: "Completed colour",
+          color_missing: "Missing colour",
+          allow_uncomplete: "Allow completed tasks to be reopened",
           due: "Due date",
           strip: "Strip from displayed summary",
           sort: "Sort order",
@@ -211,6 +230,8 @@ class FilteredTodoCard extends HTMLElement {
       computeHelper: (schema) => {
         const helpers = {
           entity: "Select the Home Assistant todo.* entity to filter.",
+          display: "Compact icon mode shows one filtered task as a tappable status icon, including when no task matches.",
+          allow_uncomplete: "In icon mode, tapping a completed task changes it back to needs_action.",
           strip: "Removes this literal text from the displayed summary only. The source task is unchanged.",
           due: "For exact dates and date ranges, use the YAML editor.",
           refresh_interval:
@@ -271,6 +292,9 @@ class FilteredTodoCard extends HTMLElement {
     if (config.filter && (typeof config.filter !== "object" || Array.isArray(config.filter))) {
       throw new Error("filter must be an object");
     }
+    if (config.display && !["list", "icon"].includes(config.display)) {
+      throw new Error("display must be list or icon");
+    }
 
     this._clearRefreshTimer();
     this._removeCacheListener();
@@ -278,6 +302,12 @@ class FilteredTodoCard extends HTMLElement {
     const cleanedConfig = FilteredTodoCard._cleanConfig(config);
     this.config = {
       filter: {},
+      display: "list",
+      icon: "mdi:check-circle-outline",
+      color_pending: "red",
+      color_completed: "green",
+      color_missing: "grey",
+      allow_uncomplete: false,
       status: "needs_action",
       sort: "due_asc",
       show_title: true,
@@ -336,7 +366,8 @@ class FilteredTodoCard extends HTMLElement {
   }
 
   _requestedStatus() {
-    if (!this.config.show_completed) return this.config.status;
+    // Icon mode needs both states to show completed items and reopen them.
+    if (this.config.display !== "icon" && !this.config.show_completed) return this.config.status;
 
     const statuses = Array.isArray(this.config.status)
       ? [...this.config.status]
@@ -769,8 +800,9 @@ class FilteredTodoCard extends HTMLElement {
     return div.innerHTML;
   }
 
-  async _complete(uid) {
+  async _setItemStatus(uid, status) {
     if (!this._hass || !uid || this._pending.has(uid)) return;
+    if (!["completed", "needs_action"].includes(status)) return;
 
     this._pending.add(uid);
     this.render();
@@ -779,13 +811,13 @@ class FilteredTodoCard extends HTMLElement {
       await this._hass.callService(
         "todo",
         "update_item",
-        { item: uid, status: "completed" },
+        { item: uid, status },
         { entity_id: this.config.entity }
       );
 
-      if (this.config.show_completed) {
+      if (this.config.display === "icon" || this.config.show_completed) {
         this.items = this.items.map((item) =>
-          item.uid === uid ? { ...item, status: "completed" } : item
+          item.uid === uid ? { ...item, status } : item
         );
       } else {
         this.items = this.items.filter((item) => item.uid !== uid);
@@ -796,12 +828,68 @@ class FilteredTodoCard extends HTMLElement {
       this.error = null;
       this._saveCache();
     } catch (error) {
-      console.error("Filtered Todo Card: unable to complete item", error);
+      console.error("Filtered Todo Card: unable to update item status", error);
       this.error = error instanceof Error ? error.message : String(error);
     } finally {
       this._pending.delete(uid);
       this.render();
       window.setTimeout(() => this._refreshItems("post-update"), 500);
+    }
+  }
+
+  _complete(uid) {
+    return this._setItemStatus(uid, "completed");
+  }
+
+  _iconColor(color) {
+    const value = String(color || "grey").trim().toLowerCase();
+    const theme = {
+      red: "var(--error-color, #f44336)",
+      green: "var(--success-color, #4caf50)",
+      grey: "var(--secondary-text-color, #9e9e9e)",
+      gray: "var(--secondary-text-color, #9e9e9e)",
+    };
+    if (theme[value]) return theme[value];
+    // Restrict values inserted into style attributes to simple CSS colours.
+    if (/^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(value)) return value;
+    if (/^[a-z]+$/.test(value)) return value;
+    return theme.grey;
+  }
+
+  _renderIcon(items) {
+    // If duplicates match, an outstanding task takes priority over a completed one.
+    const item = items.find((entry) => entry.status !== "completed") || items[0];
+    const loading = !this._hasData;
+    const busy = Boolean(item && this._pending.has(String(item.uid || "")));
+    const state = loading || !item ? "missing" : item.status === "completed" ? "completed" : "pending";
+    const canReopen = state === "completed" && this.config.allow_uncomplete;
+    const canComplete = state === "pending";
+    const enabled = Boolean(!loading && !this.error && !busy && item?.uid && this.config.allow_complete && (canComplete || canReopen));
+    const nextStatus = state === "completed" ? "needs_action" : "completed";
+    const label = this._stripSummary(item?.summary || this.config.filter?.summary?.equals || this.config.title || "Task");
+    const stateLabel = loading ? "Loading" : this.error ? "Error" : state === "missing" ? "No matching task" : state === "completed" ? "Completed" : "Outstanding";
+    const instruction = enabled ? (canReopen ? "; tap to reopen" : "; tap to complete") : "";
+    const accessibleLabel = this._escapeHtml(`${label}: ${stateLabel}${instruction}`);
+    const color = loading || this.error ? this._iconColor("grey") : this._iconColor(this.config[`color_${state}`]);
+    const icon = this._escapeHtml(busy ? "mdi:progress-clock" : this.config.icon);
+
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display: block; width: 40px; height: 40px; }
+        ha-card { display: flex; justify-content: center; align-items: center; width: 40px; height: 40px; min-height: 0; padding: 0; margin: 0; background: transparent !important; box-shadow: none !important; border: none !important; }
+        .status-icon { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; margin: 0; padding: 0; border: none; border-radius: 50%; background: transparent; cursor: pointer; color: ${color}; }
+        .status-icon:disabled { cursor: default; }
+        .status-icon:hover:not(:disabled) { background: var(--secondary-background-color); }
+        .status-icon:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; }
+        .status-icon ha-icon { --mdc-icon-size: 25px; }
+      </style>
+      <ha-card><button class="status-icon" aria-label="${accessibleLabel}" title="${accessibleLabel}" ${enabled ? "" : "disabled"}><ha-icon icon="${icon}"></ha-icon></button></ha-card>
+    `;
+
+    if (enabled) {
+      this.shadowRoot.querySelector("button.status-icon").addEventListener("click", () => {
+        this._setItemStatus(String(item.uid), nextStatus);
+      });
     }
   }
 
@@ -812,6 +900,12 @@ class FilteredTodoCard extends HTMLElement {
     const stateObj = this._hass?.states?.[this.config.entity];
     const title = this.config.title ?? stateObj?.attributes?.friendly_name ?? this.config.entity;
     const items = this._filteredItems();
+    // The icon remains visible when no task matches, regardless of hide_empty.
+    if (this.config.display === "icon") {
+      this.style.display = "";
+      this._renderIcon(items);
+      return;
+    }
     const hideCard = Boolean(this.config.hide_empty) && this._hasData && !this.error && items.length === 0;
     this.style.display = hideCard ? "none" : "";
 
@@ -940,6 +1034,7 @@ class FilteredTodoCard extends HTMLElement {
   }
 
   getCardSize() {
+    if (this.config?.display === "icon") return 1;
     const count = this._filteredItems().length;
     return Math.max(1, Math.ceil((count + 1) / 2));
   }
