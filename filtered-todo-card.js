@@ -297,6 +297,7 @@ class FilteredTodoCard extends HTMLElement {
     }
 
     this._clearRefreshTimer();
+    this._clearTimeRefreshTimer();
     this._removeCacheListener();
 
     const cleanedConfig = FilteredTodoCard._cleanConfig(config);
@@ -334,6 +335,7 @@ class FilteredTodoCard extends HTMLElement {
     this._cacheKey = this._buildCacheKey();
     this._hydrateCache();
     this._addCacheListener();
+    if (this.isConnected) this._scheduleTimeRefresh();
 
     if (this._hass) this._start();
   }
@@ -357,10 +359,12 @@ class FilteredTodoCard extends HTMLElement {
   }
 
   connectedCallback() {
+    this._scheduleTimeRefresh();
     if (this.config && this._hass && !this._started) this._start();
   }
 
   disconnectedCallback() {
+    this._clearTimeRefreshTimer();
     this._clearRefreshTimer();
     this._removeCacheListener();
   }
@@ -646,6 +650,50 @@ class FilteredTodoCard extends HTMLElement {
     return this._dateKey(new Date(text));
   }
 
+  _timeMinutes(date) {
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: this._hass?.config?.time_zone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+    const parts = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
+    return Number(parts.hour) * 60 + Number(parts.minute);
+  }
+
+  _matchDueTimeRule(item, rule) {
+    if (!rule || typeof rule !== "object" || Array.isArray(rule)) return false;
+    if (rule.mode !== "current_period" || !/^([01]\\d|2[0-3]):[0-5]\\d$/.test(rule.split_at || "")) return false;
+    const [hour, minute] = rule.split_at.split(":").map(Number);
+    const split = hour * 60 + minute;
+    const afterSplit = this._timeMinutes(new Date()) >= split;
+    const due = item.due;
+    // An all-day task has no clock time: show it in both periods by default.
+    if (!due || /^\\d{4}-\\d{2}-\\d{2}$/.test(String(due))) return rule.untimed !== "exclude";
+    const dueDate = new Date(due);
+    if (Number.isNaN(dueDate.getTime())) return false;
+    const dueMinutes = this._timeMinutes(dueDate);
+    if (!afterSplit) return dueMinutes < split;
+    // Carry incomplete tasks from the earlier period forward, without hiding them.
+    return dueMinutes >= split || (item.status !== "completed" && rule.carry_over !== false);
+  }
+
+  _clearTimeRefreshTimer() {
+    if (this._timeRefreshTimer) window.clearTimeout(this._timeRefreshTimer);
+    this._timeRefreshTimer = null;
+  }
+
+  _scheduleTimeRefresh() {
+    this._clearTimeRefreshTimer();
+    if (!this.isConnected || !this.config?.filter?.due_time) return;
+    // Re-evaluate at minute boundaries, including the configured split and midnight.
+    const delay = 60000 - (Date.now() % 60000) + 25;
+    this._timeRefreshTimer = window.setTimeout(() => {
+      this.render();
+      this._scheduleTimeRefresh();
+    }, delay);
+  }
+
   _resolveDueToken(token) {
     const today = this._todayKey();
     if (!today) return null;
@@ -731,6 +779,7 @@ class FilteredTodoCard extends HTMLElement {
     return Object.entries(filter).every(([field, rule]) => {
       if (FilteredTodoCard._isEmptyValue(rule)) return true;
       if (field === "due") return this._matchDueRule(item.due, rule);
+      if (field === "due_time") return this._matchDueTimeRule(item, rule);
       if (!["summary", "description", "uid", "status"].includes(field)) {
         console.warn(`Filtered Todo Card: unknown filter field '${field}'`);
         return false;
