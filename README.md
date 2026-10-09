@@ -386,7 +386,20 @@ filter:
 show_completed: true
 ```
 
-Before 10:00, only timed tasks due before 10:00 are shown. At or after 10:00, timed tasks due from 10:00 onwards appear, along with incomplete morning tasks carried forward. Completed morning tasks no longer appear after 10:00. Tasks with a date but no clock time are shown in both periods by default.
+The `split_at` setting accepts either one time or a list of daily boundaries. For example:
+
+```yaml
+filter:
+  due: today
+  due_time:
+    split_at:
+      - "10:00"
+      - "14:00"
+    mode: current_period
+    carry_over: true
+```
+
+Before 10:00 the active period covers tasks due before 10:00; from 10:00 to 13:59 it covers tasks due at or after 10:00 but before 14:00; from 14:00 onwards it covers tasks due at or after 14:00. Unfinished tasks from earlier periods carry over, while future-period tasks remain hidden. Boundary times use Home Assistant's timezone. Completed morning tasks no longer appear after 10:00. Tasks with a date but no clock time are shown in both periods by default.
 
 Optional YAML settings:
 
