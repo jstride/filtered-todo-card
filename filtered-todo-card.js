@@ -663,13 +663,13 @@ class FilteredTodoCard extends HTMLElement {
 
   _matchDueTimeRule(item, rule) {
     if (!rule || typeof rule !== "object" || Array.isArray(rule)) return false;
-    if (rule.mode !== "current_period" || !/^([01]\\d|2[0-3]):[0-5]\\d$/.test(rule.split_at || "")) return false;
+    if (rule.mode !== "current_period" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(rule.split_at || "")) return false;
     const [hour, minute] = rule.split_at.split(":").map(Number);
     const split = hour * 60 + minute;
     const afterSplit = this._timeMinutes(new Date()) >= split;
     const due = item.due;
     // An all-day task has no clock time: show it in both periods by default.
-    if (!due || /^\\d{4}-\\d{2}-\\d{2}$/.test(String(due))) return rule.untimed !== "exclude";
+    if (!due || /^\d{4}-\d{2}-\d{2}$/.test(String(due))) return rule.untimed !== "exclude";
     const dueDate = new Date(due);
     if (Number.isNaN(dueDate.getTime())) return false;
     const dueMinutes = this._timeMinutes(dueDate);
@@ -985,7 +985,7 @@ class FilteredTodoCard extends HTMLElement {
               ? `<div class="description${this.config.show_summary ? "" : " primary-description"}">${this._escapeHtml(item.description)}</div>`
               : "";
           const checkbox = this.config.allow_complete
-            ? `<button class="complete${completed ? " completed" : ""}" data-uid="${encodedUid}" ${pending || completed ? "disabled" : ""} aria-label="${completed ? "Completed" : "Mark item complete"}">
+            ? `<button class="complete${completed ? " completed" : ""}" data-uid="${encodedUid}" ${pending || (completed && !this.config.allow_uncomplete) ? "disabled" : ""} aria-label="${completed ? "Mark item incomplete" : "Mark item complete"}">
                  <ha-icon icon="${pending ? "mdi:progress-clock" : completed ? "mdi:checkbox-marked" : "mdi:checkbox-blank-outline"}"></ha-icon>
                </button>`
             : "";
@@ -1077,7 +1077,8 @@ class FilteredTodoCard extends HTMLElement {
     this.shadowRoot.querySelectorAll("button.complete").forEach((button) => {
       button.addEventListener("click", () => {
         const uid = decodeURIComponent(button.dataset.uid || "");
-        this._complete(uid);
+        const completed = button.classList.contains("completed");
+        this._setItemStatus(uid, completed ? "needs_action" : "completed");
       });
     });
   }
