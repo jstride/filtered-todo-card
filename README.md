@@ -371,6 +371,30 @@ filter:
   due: today
 ```
 
+## Time-of-day filtering (YAML)
+
+Use `filter.due_time` to switch between tasks due before and after a particular clock time. The card uses Home Assistant's configured timezone and re-evaluates each minute without fetching tasks again.
+
+```yaml
+type: custom:filtered-todo-card
+entity: todo.tilly
+filter:
+  due: today
+  due_time:
+    split_at: "10:00"
+    mode: current_period
+show_completed: true
+```
+
+Before 10:00, only timed tasks due before 10:00 are shown. At or after 10:00, timed tasks due from 10:00 onwards appear, along with incomplete morning tasks carried forward. Completed morning tasks no longer appear after 10:00. Tasks with a date but no clock time are shown in both periods by default.
+
+Optional YAML settings:
+
+- `carry_over: false` - do not retain unfinished morning tasks after the split.
+- `untimed: exclude` - hide date-only tasks that have no time.
+
+The `due: today` rule still applies, so tasks from previous dates are not included. Time filtering currently supports the `current_period` mode and is configured in YAML rather than the visual editor.
+
 ## Notes
 
 - Filters only affect what this card displays. They do not create a new Home Assistant `todo.*` entity.
