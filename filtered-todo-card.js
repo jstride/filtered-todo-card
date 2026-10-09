@@ -663,19 +663,26 @@ class FilteredTodoCard extends HTMLElement {
 
   _matchDueTimeRule(item, rule) {
     if (!rule || typeof rule !== "object" || Array.isArray(rule)) return false;
-    if (rule.mode !== "current_period" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(rule.split_at || "")) return false;
-    const [hour, minute] = rule.split_at.split(":").map(Number);
-    const split = hour * 60 + minute;
-    const afterSplit = this._timeMinutes(new Date()) >= split;
+    if (rule.mode !== "current_period") return false;
+    const times = Array.isArray(rule.split_at) ? rule.split_at : [rule.split_at];
+    if (!times.length || !times.every((time) => typeof time === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(time))) return false;
+    const boundaries = [...new Set(times.map((time) => {
+      const [hour, minute] = time.split(":").map(Number);
+      return hour * 60 + minute;
+    }))].sort((a, b) => a - b);
+    const nowMinutes = this._timeMinutes(new Date());
+    const period = (minutes) => boundaries.filter((boundary) => minutes >= boundary).length;
+    const activePeriod = period(nowMinutes);
     const due = item.due;
     // An all-day task has no clock time: show it in both periods by default.
     if (!due || /^\d{4}-\d{2}-\d{2}$/.test(String(due))) return rule.untimed !== "exclude";
     const dueDate = new Date(due);
     if (Number.isNaN(dueDate.getTime())) return false;
     const dueMinutes = this._timeMinutes(dueDate);
-    if (!afterSplit) return dueMinutes < split;
-    // Carry incomplete tasks from the earlier period forward, without hiding them.
-    return dueMinutes >= split || (item.status !== "completed" && rule.carry_over !== false);
+    const duePeriod = period(dueMinutes);
+    if (duePeriod === activePeriod) return true;
+    // Retain unfinished tasks from earlier periods, never pull future tasks forward.
+    return duePeriod < activePeriod && item.status !== "completed" && rule.carry_over !== false;
   }
 
   _clearTimeRefreshTimer() {
